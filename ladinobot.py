@@ -5,6 +5,7 @@ import logging
 from datetime import datetime
 import requests
 from dotenv import load_dotenv
+from anthropic import Anthropic
 
 # Load environment variables from .env file
 load_dotenv()
@@ -13,14 +14,15 @@ load_dotenv()
 BOT_TOKEN = os.getenv('BOT_TOKEN')
 OPENAI_TOKEN = os.getenv('OPENAI_API_KEY')
 COLLECTIVAT_TOKEN = os.getenv('COLLECTIVAT_TOKEN')
+SYSTEM_PROMPT_PATH = os.getenv('PROMPT_PATH')
+ANTHROPIC_KEY = os.getenv('ANTHROPIC_KEY')
 
 # Validate required environment variables
-required_vars = ['BOT_TOKEN', 'OPENAI_TOKEN', 'COLLECTIVAT_TOKEN']
+required_vars = ['BOT_TOKEN', 'ANTHROPIC_KEY', 'COLLECTIVAT_TOKEN', 'SYSTEM_PROMPT_PATH']
 missing_vars = [var for var in required_vars if not globals()[var]]
 
 if missing_vars:
     raise RuntimeError(f"Missing required environment variables: {', '.join(missing_vars)}")
-
 
 # Set up logging
 logging.basicConfig(
@@ -29,20 +31,18 @@ logging.basicConfig(
     format='%(asctime)s | %(levelname)s | %(message)s'
 )
 
-# Configuration
-BOT_TOKEN = os.environ.get('BOT_TOKEN')
-OPENAI_TOKEN = os.environ.get('OPENAI_TOKEN')
-
 # Initialize the clients
 bot = telebot.TeleBot(BOT_TOKEN)
-# openai.api_key = OPENAI_TOKEN
-client = OpenAI()
+
+#Initialize LLM backend
+# client = OpenAI()
+anthropic = Anthropic(api_key=ANTHROPIC_KEY)
 
 # Store conversation history for each user
 conversation_histories = {}
 
 # Load system prompt from file
-def load_system_prompt(file_path: str = "system_prompt.md") -> str:
+def load_system_prompt(file_path: str = SYSTEM_PROMPT_PATH) -> str:
     """
     Load system prompt from a text file.
     
@@ -89,6 +89,40 @@ def update_conversation_history(user_id, role, content):
         history.pop(0)
     
     conversation_histories[user_id] = history
+
+def get_claude_response(user_id, user_message):
+    """Get response from Claude API"""
+    try:
+        # Retrieve conversation history and create messages
+        history = get_conversation_history(user_id)
+        
+        # Convert conversation history to Claude's format
+        messages = [
+            {
+                "role": "assistant" if msg["role"] == "assistant" else "user",
+                "content": msg["content"]
+            }
+            for msg in history
+        ]
+        
+        # Create the completion with Claude
+        response = anthropic.messages.create(
+            model="claude-3-sonnet-20240229",
+            max_tokens=2048,
+            temperature=1,
+            system=SYSTEM_PROMPT,
+            messages=[
+                *messages,
+                {"role": "user", "content": user_message}
+            ]
+        )
+        
+        return response.content[0].text
+    
+    except Exception as e:
+        logging.error(f"Claude API error: {e}")
+        return "Lo siento, akontesyo un falta. Por favor, intentalo de muevo."
+
 
 def get_openai_response(user_id, user_message):
     """Get response from OpenAI"""
@@ -185,24 +219,6 @@ def translate(text: str, src_lang:str) -> str:
         logging.error(f"Unexpected error during translation: {str(e)}")
         return text
 
-@bot.message_handler(commands=['start'])
-def send_welcome(message):
-    welcome_text = """¡Ola! 
-    
-So Estreya Perez, su giador de la aluenga Ladino i la kultura sefaradi de el siglo XIX Estanbol.
-
-Como puedo ayudole oy? Puedes demandarme aserka de :
-- Lengaje i ekspresiones Ladino
-- Las kostumbres i tradisiones sefaradies
-- La vida en Estanbol de el siglo XIX
-- Mi famiya i komunidad
-
-En ke puedo ayudole?
-"""
-    
-    bot.reply_to(message, welcome_text)
-    logging.info(f"New user started conversation: {message.from_user.id}")
-
 @bot.message_handler(func=lambda msg: True)
 def handle_message(message):
     try:
@@ -216,20 +232,24 @@ def handle_message(message):
         user_message_es = translate(text = user_message, src_lang='lad')
         logging.info(f"Translated to es: {user_message_es}")
         
-        # Get OpenAI response
-        openai_response = get_openai_response(user_id, user_message_es)
-        logging.info(f"OpenAI response: {openai_response}")
+        # Get LLM response
+        # llm_response = get_openai_response(user_id, user_message_es)
+        # llm_response = "FAKE"
+        llm_response = get_claude_response(user_id, user_message_es)
+        logging.info(f"LLM response: {llm_response}")
         
         # Update conversation history
         update_conversation_history(user_id, "user", user_message_es)
-        update_conversation_history(user_id, "assistant", openai_response)
+        update_conversation_history(user_id, "assistant", llm_response)
         
-        # Translate to Ladino
-        response_lad = translate(text=openai_response, src_lang='es')
-        logging.info(f"Translated to lad: {response_lad}")
+        # # Translate to Ladino (commented out older version)
+        # response_lad = translate(text=llm_response, src_lang='es')
+        # logging.info(f"Translated to lad: {response_lad}")
+
+        response = llm_response
 
         # Send response
-        bot.reply_to(message, response_lad)
+        bot.reply_to(message, response)
         
         # Log success
         logging.info(f"Sent response to {user_id}")
