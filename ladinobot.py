@@ -107,7 +107,7 @@ def get_claude_response(user_id, user_message):
         
         # Create the completion with Claude
         response = anthropic.messages.create(
-            model="claude-3-sonnet-20240229",
+            model="claude-3-5-sonnet-20241022",
             max_tokens=2048,
             temperature=1,
             system=SYSTEM_PROMPT,
@@ -121,7 +121,7 @@ def get_claude_response(user_id, user_message):
     
     except Exception as e:
         logging.error(f"Claude API error: {e}")
-        return "Lo siento, akontesyo un falta. Por favor, intentalo de muevo."
+        return "Te rogo diskulpas, no esta kaminando bueno. Aprova otruna vez"
 
 
 def get_openai_response(user_id, user_message):
