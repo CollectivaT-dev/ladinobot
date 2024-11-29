@@ -7,34 +7,87 @@ from anthropic import Anthropic
 
 class ClaudeHandler:
     """
-    Handles interactions with Claude API, including knowledge management and response generation.
-    This class centralizes all Claude-specific logic and manages conversation formatting and 
-    knowledge resource integration with appropriate caching controls.
+    Handles interactions with Claude API with optimized caching strategy.
+    This implementation maintains a single cached knowledge base that's shared
+    across all user interactions, significantly reducing API costs.
     """
     
-    def __init__(self, anthropic_client: Anthropic, system_prompt: str, history_window: int = 10, knowledge_dir: str = "knowledge"):
+    def __init__(self, anthropic_client: Anthropic, system_prompt: str, 
+                 history_window: int = 10, knowledge_dir: str = "knowledge"):
         """
-        Initialize the Claude handler with necessary components.
+        Initialize the Claude handler and prepare the cached knowledge base.
         
         Args:
             anthropic_client: An initialized Anthropic client instance
+            system_prompt: The base system prompt to use
+            history_window: Number of previous messages to maintain in context
             knowledge_dir: Path to directory containing knowledge resources
         """
         self.client = anthropic_client
-        self.knowledge_dir = Path(knowledge_dir)
         self.system_prompt = system_prompt
+        self.knowledge_dir = Path(knowledge_dir)
         self.history_window = history_window
+        
+        # Load knowledge resources once during initialization
         self.knowledge_resources = self._load_knowledge_resources()
+        
+        # Prepare the cached knowledge content
+        self.cached_knowledge = self._prepare_knowledge_content()
+        
+        # Initialize the cache with first API call
+        self._initialize_cache()
+        
         logging.info(f"Initialized ClaudeHandler with {len(self.knowledge_resources)} knowledge resources")
 
-    def get_response(self, user_id: str, user_message: str, 
-                 conversation_history: List[Dict]) -> Tuple[str, Dict]:
+    def _prepare_knowledge_content(self) -> dict:
         """
-        Generate a response using the Claude API with optimized prompt caching.
-        This method carefully structures the conversation to ensure proper handling of:
-        1. Knowledge base caching
-        2. Conversation history
-        3. Current message context
+        Prepare the knowledge content in the format needed for Claude API.
+        This formatted content will be cached and reused across all interactions.
+        """
+        # Combine all knowledge resources with semantic XML tags
+        knowledge_content = "<knowledge_base>\n"
+        for resource_name, content in self.knowledge_resources.items():
+            knowledge_content += f"<{resource_name}>\n{content}\n</{resource_name}>\n"
+        knowledge_content += "</knowledge_base>"
+        
+        # Format the message for Claude API
+        return {
+            "role": "user",
+            "content": [
+                {
+                    "type": "text",
+                    "text": knowledge_content,
+                    "cache_control": {"type": "ephemeral"}
+                }
+            ]
+        }
+
+    def _initialize_cache(self):
+        """
+        Initialize the cache by making a simple API call.
+        This ensures our knowledge base is cached before handling real user messages.
+        """
+        try:
+            # Make a simple API call to cache the knowledge base
+            response = self.client.messages.create(
+                model="claude-3-5-sonnet-20241022",
+                max_tokens=1,  # Minimize token usage for initialization
+                temperature=1,
+                system=[{"type": "text", "text": self.system_prompt}],
+                messages=[self.cached_knowledge],
+                extra_headers={"anthropic-beta": "prompt-caching-2024-07-31"}
+            )
+            
+            logging.info("Successfully initialized knowledge base cache")
+            
+        except Exception as e:
+            logging.error(f"Failed to initialize cache: {str(e)}")
+            raise
+
+    def get_response(self, user_id: str, user_message: str, 
+                    conversation_history: List[Dict]) -> Tuple[str, Dict]:
+        """
+        Generate a response using the Claude API with shared cache.
         
         Args:
             user_id: Unique identifier for the user
@@ -45,35 +98,12 @@ class ClaudeHandler:
             Tuple containing (response_text, usage_statistics)
         """
         try:
-            # First, combine all knowledge resources into a single cacheable block.
-            # We wrap each resource in semantic XML tags to help Claude understand its context.
-            knowledge_content = "<knowledge_base>\n"
-            for resource_name, content in self.knowledge_resources.items():
-                knowledge_content += f"<{resource_name}>\n{content}\n</{resource_name}>\n"
-            knowledge_content += "</knowledge_base>"
+            # Start with our cached knowledge message
+            formatted_messages = [self.cached_knowledge]
             
-            # Initialize our messages array. The order of messages is crucial for proper conversation flow.
-            formatted_messages = []
-            
-            # Add the knowledge base as our first message with caching enabled.
-            # This large content will be cached and reused in subsequent calls.
-            formatted_messages.append({
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": knowledge_content,
-                        "cache_control": {"type": "ephemeral"}
-                    }
-                ]
-            })
-            
-            # Add historical context from previous conversations.
-            # We limit this to maintain relevant context without overwhelming.
+            # Add conversation history
             if conversation_history:
-                # Leave room for the current message by using history_window - 1
-                history_slice = conversation_history[-(self.history_window - 1):]
-                for msg in history_slice:
+                for msg in conversation_history[-(self.history_window - 1):]:
                     formatted_messages.append({
                         "role": msg["role"],
                         "content": [
@@ -84,37 +114,28 @@ class ClaudeHandler:
                         ]
                     })
             
-            # Add the current user message as the final message.
-            # We clearly mark this as the current question to ensure Claude responds to it.
+            # Add current message
             formatted_messages.append({
                 "role": "user",
                 "content": [
                     {
                         "type": "text",
-                        "text": f"Current message requiring response: {user_message}",
-                        "cache_control": {"type": "ephemeral"}
+                        "text": f"Current message: {user_message}"
                     }
                 ]
             })
             
-            # Make the API call with our carefully structured message array
+            # Make API call
             response = self.client.messages.create(
                 model="claude-3-5-sonnet-20241022",
                 max_tokens=2048,
                 temperature=1,
-                system=[
-                    {
-                        "type": "text",
-                        "text": self.system_prompt
-                    }
-                ],
+                system=[{"type": "text", "text": self.system_prompt}],
                 messages=formatted_messages,
-                extra_headers={
-                    "anthropic-beta": "prompt-caching-2024-07-31"
-                }
+                extra_headers={"anthropic-beta": "prompt-caching-2024-07-31"}
             )
             
-            # Collect detailed usage statistics to monitor caching effectiveness
+            # Collect usage statistics
             usage_stats = {
                 "input_tokens": response.usage.input_tokens,
                 "output_tokens": response.usage.output_tokens,
@@ -122,32 +143,26 @@ class ClaudeHandler:
                 "cache_created": getattr(response.usage, "cache_creation_input_tokens", 0)
             }
             
-            # Log comprehensive statistics about the API call
             logging.info(
-                f"API call stats - Input tokens: {usage_stats['input_tokens']}, "
+                f"API call stats for user {user_id} - "
+                f"Input tokens: {usage_stats['input_tokens']}, "
                 f"Cache read: {usage_stats['cache_read']}, "
                 f"Cache created: {usage_stats['cache_created']}, "
                 f"Output tokens: {usage_stats['output_tokens']}"
             )
             
-            # Safely handle the response content
             if response.content and len(response.content) > 0:
                 return response.content[0].text, usage_stats
             else:
                 logging.error("Empty response content from Claude API")
                 return "Te rogo diskulpas, no esta kaminando bueno. Aprova otruna vez.", usage_stats
-                
+            
         except Exception as e:
             logging.error(f"Claude API error: {str(e)}", exc_info=True)
             return "Te rogo diskulpas, no esta kaminando bueno. Aprova otruna vez.", {}
 
     def _load_knowledge_resources(self) -> Dict[str, str]:
-        """
-        Load and prepare knowledge resources from the specified directory.
-        
-        Returns:
-            Dictionary mapping resource names to their content
-        """
+        """Load and prepare knowledge resources from the specified directory."""
         resources = {}
         try:
             if not self.knowledge_dir.exists():
@@ -168,4 +183,3 @@ class ClaudeHandler:
         except Exception as e:
             logging.error(f"Error loading knowledge resources: {e}")
             return resources
-
