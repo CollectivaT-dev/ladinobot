@@ -39,9 +39,6 @@ bot = telebot.TeleBot(BOT_TOKEN)
 # client = OpenAI()
 anthropic = Anthropic(api_key=ANTHROPIC_KEY)
 
-# Initialize Claude handler
-claude_handler = ClaudeHandler(anthropic, knowledge_dir=KNOWLEDGE_DIR)
-
 # Store conversation history for each user
 conversation_histories = {}
 
@@ -72,9 +69,12 @@ def load_system_prompt(file_path: str = SYSTEM_PROMPT_PATH) -> str:
 
 # Replace the existing SYSTEM_PROMPT definition with:
 try:
-    SYSTEM_PROMPT = load_system_prompt()
+    system_prompt = load_system_prompt()
 except Exception as e:
     raise RuntimeError(f"Failed to initialize bot: {str(e)}")
+
+# Initialize Claude handler
+claude_handler = ClaudeHandler(anthropic, system_prompt = system_prompt, knowledge_dir=KNOWLEDGE_DIR)
 
 def get_conversation_history(user_id):
     """Get or initialize conversation history for a user"""
@@ -100,7 +100,6 @@ def get_claude_response(user_id: str, user_message: str) -> str:
     response_text, usage_stats = claude_handler.get_response(
         user_id=user_id,
         user_message=user_message,
-        system_prompt=SYSTEM_PROMPT,
         conversation_history=history
     )
     
@@ -108,134 +107,6 @@ def get_claude_response(user_id: str, user_message: str) -> str:
     logging.info(f"Claude API usage stats: {usage_stats}")
     
     return response_text
-def get_claude_response_old(user_id, user_message):
-    """Get response from Claude API"""
-    try:
-        # Retrieve conversation history and create messages
-        history = get_conversation_history(user_id)
-        
-        # Convert conversation history to Claude's format
-        messages = [
-            {
-                "role": "assistant" if msg["role"] == "assistant" else "user",
-                "content": msg["content"]
-            }
-            for msg in history
-        ]
-        
-        # Create the completion with Claude
-        response = anthropic.messages.create(
-            model="claude-3-5-sonnet-20241022",
-            max_tokens=2048,
-            temperature=1,
-            system=SYSTEM_PROMPT,
-            messages=[
-                *messages,
-                {"role": "user", "content": user_message}
-            ]
-        )
-        
-        return response.content[0].text
-    
-    except Exception as e:
-        logging.error(f"Claude API error: {e}")
-        return "Te rogo diskulpas, no esta kaminando bueno. Aprova otruna vez."
-
-def get_openai_response(user_id, user_message):
-    """Get response from OpenAI"""
-    try:
-        # Retrieve conversation history and create a message payload
-        history = get_conversation_history(user_id)
-        messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            *history,
-            {"role": "user", "content": user_message}
-        ]
-        
-        # Call OpenAI's chat completion API
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",  # Replace with your preferred model
-            messages=messages,
-            max_tokens=2048,
-            temperature=1,
-            top_p=1,
-            frequency_penalty=0,
-            presence_penalty=0,
-            response_format={
-             "type": "text"
-            }
-        )
-        
-        # Directly access the message attribute from the response
-        return response.choices[0].message.content
-    
-    except AttributeError as e:
-        logging.error(f"Attribute error while parsing OpenAI response: {e}")
-        return "Te rogo diskulpas, no esta kaminando bueno. Aprova otruna vez."
-    except Exception as e:
-        logging.error(f"OpenAI API error: {e}")
-        return "Te rogo diskulpas, no esta kaminando bueno. Aprova otruna vez."
-
-def translate(text: str, src_lang:str) -> str:
-    """
-    Translates Spanish text to Ladino using the Collectivat API.
-    
-    Args:
-        text (str): The Spanish text to translate
-        
-    Returns:
-        str: The translated Ladino text, or original text if translation fails
-    """
-    API_URL = "http://api.collectivat.cat/translate/"
-    API_TOKEN = os.environ.get('COLLECTIVAT_TOKEN')  # Add this to your environment variables
-
-    if src_lang=='es':
-        tgt_lang = 'lad'
-    elif src_lang == 'lad':
-        tgt_lang = 'es'
-    else:
-        logging.error("Unknown language id")
-        return text
-    
-    if not API_TOKEN:
-        logging.error("Missing COLLECTIVAT_TOKEN environment variable")
-        return text
-    
-    try:
-        payload = {
-            "src": src_lang,  
-            "tgt": tgt_lang,
-            "text": text,
-            "token": API_TOKEN
-        }
-        
-        headers = {
-            "Content-Type": "application/json"
-        }
-        
-        response = requests.post(API_URL, json=payload, headers=headers)
-        response.raise_for_status()  # Raises an HTTPError for bad responses
-        
-        data = response.json()
-        translated_text = data.get("translation")
-        
-        if translated_text:
-            logging.info(f"Successfully translated text. Usage: {data.get('usage', 'N/A')}")
-            return translated_text
-        else:
-            logging.warning("Translation response missing 'translation' field")
-            return text
-            
-    except requests.exceptions.RequestException as e:
-        logging.error(f"Translation API request failed: {str(e)}")
-        return text
-    except ValueError as e:
-        logging.error(f"Failed to parse translation API response: {str(e)}")
-        return text
-    except Exception as e:
-        logging.error(f"Unexpected error during translation: {str(e)}")
-        return text
-
 
 @bot.message_handler(func=lambda msg: True)
 def handle_message(message):
