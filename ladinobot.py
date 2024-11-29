@@ -1,11 +1,11 @@
 import os
 import telebot
-from openai import OpenAI
 import logging
 from datetime import datetime
-import requests
 from dotenv import load_dotenv
 from anthropic import Anthropic
+from claude_handler import ClaudeHandler
+
 
 # Load environment variables from .env file
 load_dotenv()
@@ -16,6 +16,7 @@ OPENAI_TOKEN = os.getenv('OPENAI_API_KEY')
 COLLECTIVAT_TOKEN = os.getenv('COLLECTIVAT_TOKEN')
 SYSTEM_PROMPT_PATH = os.getenv('PROMPT_PATH')
 ANTHROPIC_KEY = os.getenv('ANTHROPIC_KEY')
+KNOWLEDGE_DIR = os.getenv('KNOWLEDGE_DIR')
 
 # Validate required environment variables
 required_vars = ['BOT_TOKEN', 'ANTHROPIC_KEY', 'COLLECTIVAT_TOKEN', 'SYSTEM_PROMPT_PATH']
@@ -37,6 +38,9 @@ bot = telebot.TeleBot(BOT_TOKEN)
 #Initialize LLM backend
 # client = OpenAI()
 anthropic = Anthropic(api_key=ANTHROPIC_KEY)
+
+# Initialize Claude handler
+claude_handler = ClaudeHandler(anthropic, knowledge_dir=KNOWLEDGE_DIR)
 
 # Store conversation history for each user
 conversation_histories = {}
@@ -72,7 +76,6 @@ try:
 except Exception as e:
     raise RuntimeError(f"Failed to initialize bot: {str(e)}")
 
-
 def get_conversation_history(user_id):
     """Get or initialize conversation history for a user"""
     if user_id not in conversation_histories:
@@ -90,7 +93,22 @@ def update_conversation_history(user_id, role, content):
     
     conversation_histories[user_id] = history
 
-def get_claude_response(user_id, user_message):
+
+def get_claude_response(user_id: str, user_message: str) -> str:
+    """Get response from Claude API with knowledge integration"""
+    history = get_conversation_history(user_id)
+    response_text, usage_stats = claude_handler.get_response(
+        user_id=user_id,
+        user_message=user_message,
+        system_prompt=SYSTEM_PROMPT,
+        conversation_history=history
+    )
+    
+    # Log the usage stats
+    logging.info(f"Claude API usage stats: {usage_stats}")
+    
+    return response_text
+def get_claude_response_old(user_id, user_message):
     """Get response from Claude API"""
     try:
         # Retrieve conversation history and create messages
@@ -121,8 +139,7 @@ def get_claude_response(user_id, user_message):
     
     except Exception as e:
         logging.error(f"Claude API error: {e}")
-        return "Te rogo diskulpas, no esta kaminando bueno. Aprova otruna vez"
-
+        return "Te rogo diskulpas, no esta kaminando bueno. Aprova otruna vez."
 
 def get_openai_response(user_id, user_message):
     """Get response from OpenAI"""
@@ -154,10 +171,10 @@ def get_openai_response(user_id, user_message):
     
     except AttributeError as e:
         logging.error(f"Attribute error while parsing OpenAI response: {e}")
-        return "Lo siento, akontesyo un falta. Por favor, intentalo de muevo."
+        return "Te rogo diskulpas, no esta kaminando bueno. Aprova otruna vez."
     except Exception as e:
         logging.error(f"OpenAI API error: {e}")
-        return "Lo siento, akontesyo un falta. Por favor, intentalo de muevo."
+        return "Te rogo diskulpas, no esta kaminando bueno. Aprova otruna vez."
 
 def translate(text: str, src_lang:str) -> str:
     """
@@ -219,6 +236,7 @@ def translate(text: str, src_lang:str) -> str:
         logging.error(f"Unexpected error during translation: {str(e)}")
         return text
 
+
 @bot.message_handler(func=lambda msg: True)
 def handle_message(message):
     try:
@@ -227,25 +245,17 @@ def handle_message(message):
         
         # Log incoming message
         logging.info(f"Received message from {user_id}: {user_message}")
-
-        # Translate to spanish
-        user_message_es = translate(text = user_message, src_lang='lad')
-        logging.info(f"Translated to es: {user_message_es}")
         
         # Get LLM response
         # llm_response = get_openai_response(user_id, user_message_es)
         # llm_response = "FAKE"
-        llm_response = get_claude_response(user_id, user_message_es)
+        llm_response = get_claude_response(user_id, user_message)
         logging.info(f"LLM response: {llm_response}")
         
         # Update conversation history
-        update_conversation_history(user_id, "user", user_message_es)
+        update_conversation_history(user_id, "user", user_message)
         update_conversation_history(user_id, "assistant", llm_response)
-        
-        # # Translate to Ladino (commented out older version)
-        # response_lad = translate(text=llm_response, src_lang='es')
-        # logging.info(f"Translated to lad: {response_lad}")
-
+    
         response = llm_response
 
         # Send response
@@ -257,7 +267,7 @@ def handle_message(message):
     except Exception as e:
         error_message = f"Error processing message: {str(e)}"
         logging.error(error_message)
-        bot.reply_to(message, "Lo siento, akontesyo un falta. Por favor, intentalo de muevo.")
+        bot.reply_to(message, "Te rogo diskulpas, no esta kaminando bueno. Aprova otruna vez.")
 
 def main():
     logging.info("Bot started")
