@@ -17,6 +17,7 @@ COLLECTIVAT_TOKEN = os.getenv('COLLECTIVAT_TOKEN')
 SYSTEM_PROMPT_PATH = os.getenv('PROMPT_PATH')
 ANTHROPIC_KEY = os.getenv('ANTHROPIC_KEY')
 KNOWLEDGE_DIR = os.getenv('KNOWLEDGE_DIR')
+HISTORY_WINDOW = 10
 
 # Validate required environment variables
 required_vars = ['BOT_TOKEN', 'ANTHROPIC_KEY', 'COLLECTIVAT_TOKEN', 'SYSTEM_PROMPT_PATH']
@@ -74,7 +75,10 @@ except Exception as e:
     raise RuntimeError(f"Failed to initialize bot: {str(e)}")
 
 # Initialize Claude handler
-claude_handler = ClaudeHandler(anthropic, system_prompt = system_prompt, knowledge_dir=KNOWLEDGE_DIR)
+claude_handler = ClaudeHandler( anthropic, 
+                                system_prompt = system_prompt, 
+                                history_window = HISTORY_WINDOW,
+                                knowledge_dir=KNOWLEDGE_DIR)
 
 def get_conversation_history(user_id):
     """Get or initialize conversation history for a user"""
