@@ -27,6 +27,11 @@ Consonants
    b. In combination with consonants - klasa (class), kerer (to want), aktuar (to act)
 3. At the end of a syllable, in foreign/technical words - rok (rock), tik (twitch)
 
+Punctuation
+
+1. Unlike Spanish, Ladino does not use inverted question marks (¿) or inverted exclamation marks (¡)
+2. Use only regular question marks (?) and exclamation marks (!) at the end of sentences
+
 Word-Specific Changes
 
 1. Write ‘muncho’,  ‘muncha’, ‘munchos’, or ‘munchas’ instead of ‘mucho’, ‘mucha’, ‘muchos’, ‘muchas’, respectively
